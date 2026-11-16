@@ -20,10 +20,6 @@ jobs:
     # Self-hosted Apple Silicon Mac minis. Intel coverage runs under Rosetta.
     runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 45
-    env:
-      # Per-job tool directory: runners that share a host and home directory
-      # must not race on one install location.
-      DICTATE_CI_TOOL_CACHE: ${{ runner.temp }}/dictate-tools
     defaults:
       run:
         shell: bash
@@ -45,6 +41,9 @@ jobs:
           xcode_version="$(xcodebuild -version | sed -n '1s/^Xcode //p')"
           test -n "$xcode_version"
           echo "DICTATE_XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
+          # Per-job tool directory: runners that share a host and home
+          # directory must not race on one install location.
+          echo "DICTATE_CI_TOOL_CACHE=$RUNNER_TEMP/dictate-tools" >> "$GITHUB_ENV"
 
       - name: Restore explicit SwiftPM and tool caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

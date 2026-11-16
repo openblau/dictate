@@ -1,7 +1,7 @@
 {
-  "name": "talktext",
+  "name": "dictate",
   "private": true,
   "scripts": {
-    "talktext": "bun run scripts/talktext.ts"
+    "dictate": "bun run scripts/dictate.ts"
   }
 }

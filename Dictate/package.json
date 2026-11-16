@@ -1,0 +1,7 @@
+{
+  "name": "dictate-swift-package",
+  "private": true,
+  "scripts": {
+    "dictate": "bun run ../scripts/dictate.ts"
+  }
+}

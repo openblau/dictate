@@ -16,11 +16,10 @@ concurrency:
 
 jobs:
   quality:
-    name: App, tests, and bundle (Intel)
-    runs-on: macos-15-intel
+    name: App, tests, and bundle
+    # Self-hosted Apple Silicon Mac minis. Intel coverage runs under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 45
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -32,22 +31,29 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify pinned runner and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "x86_64"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
           swift --version
+          xcode_version="$(xcodebuild -version | sed -n '1s/^Xcode //p')"
+          test -n "$xcode_version"
+          echo "DICTATE_XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
+          # Per-job tool directory: runners that share a host and home
+          # directory must not race on one install location.
+          echo "DICTATE_CI_TOOL_CACHE=$RUNNER_TEMP/dictate-tools" >> "$GITHUB_ENV"
 
       - name: Restore explicit SwiftPM and tool caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            TalkText/.build
-            ~/.cache/talktext-tools
-          key: talktext-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-${{ hashFiles('TalkText/Package.swift', 'TalkText/Package.resolved') }}
+            Dictate/.build
+            ${{ runner.temp }}/dictate-tools
+          key: dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
           restore-keys: |
-            talktext-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-
+            dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-
 
       - name: Install digest-pinned lint tools
         run: |
@@ -58,68 +64,75 @@ jobs:
         run: |
           while IFS= read -r -d '' script; do
             bash -n "$script"
-          done < <(find . -type f -name '*.sh' -not -path './TalkText/.build/*' -print0)
-          plutil -lint TalkText/Info.plist TalkText/TalkText.entitlements
-          if /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' TalkText/Info.plist >/dev/null 2>&1; then
-            echo 'TalkText/Info.plist must not duplicate VERSION' >&2
+          done < <(find . -type f -name '*.sh' -not -path './Dictate/.build/*' -print0)
+          plutil -lint Dictate/Info.plist Dictate/Dictate.entitlements
+          if /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' Dictate/Info.plist >/dev/null 2>&1; then
+            echo 'Dictate/Info.plist must not duplicate VERSION' >&2
             exit 1
           fi
           ./scripts/read-version.sh
           swiftlint lint --strict --config .swiftlint.yml
-          swiftformat --lint --config .swiftformat TalkText/Sources TalkText/Tests
+          swiftformat --lint --config .swiftformat Dictate/Sources Dictate/Tests
 
       - name: Build debug and release for every supported architecture
         run: |
           for configuration in debug release; do
             for architecture in arm64 x86_64; do
               swift build \
-                --package-path TalkText \
+                --package-path Dictate \
                 --configuration "$configuration" \
-                --triple "$architecture-apple-macosx$TALKTEXT_MINIMUM_SYSTEM_VERSION" \
-                --scratch-path "TalkText/.build/$configuration-$architecture" \
+                --triple "$architecture-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+                --scratch-path "Dictate/.build/$configuration-$architecture" \
                 -Xswiftc -warnings-as-errors
             done
           done
 
-      - name: Run all tests
+      - name: Run all tests natively and under Rosetta
         run: |
           swift test \
-            --package-path TalkText \
+            --package-path Dictate \
             --configuration debug \
-            --triple "x86_64-apple-macosx$TALKTEXT_MINIMUM_SYSTEM_VERSION" \
-            --scratch-path TalkText/.build/tests-x86_64 \
+            --triple "arm64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+            --scratch-path Dictate/.build/tests-arm64 \
+            -Xswiftc -warnings-as-errors
+          # The whole toolchain runs translated so the x86_64 test bundle
+          # loads. SwiftPM's Swift Testing helper always launches natively and
+          # cannot load it, so that library is covered by the arm64 run above.
+          /usr/bin/arch -x86_64 swift test \
+            --package-path Dictate \
+            --configuration debug \
+            --triple "x86_64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+            --scratch-path Dictate/.build/tests-x86_64 \
+            --disable-swift-testing \
             -Xswiftc -warnings-as-errors
           bash tests/dependency-tool-fixtures.sh
 
       - name: Assemble and verify extracted deterministic test bundle
         run: |
-          fixture_dir="$RUNNER_TEMP/talktext-model-fixture"
+          fixture_dir="$RUNNER_TEMP/dictate-model-fixture"
           python3 tests/create-parakeet-fixture.py "$fixture_dir"
-          export TALKTEXT_MODEL_MANIFEST="$fixture_dir/manifest.json"
-          export TALKTEXT_MODEL_PATH="$fixture_dir/parakeet-ultra-coreml"
-          TALKTEXT_SIGNING_MODE=adhoc ./bundle.sh
-          archive="$RUNNER_TEMP/$TALKTEXT_BUNDLE_NAME-ci.zip"
+          export DICTATE_MODEL_MANIFEST="$fixture_dir/manifest.json"
+          export DICTATE_MODEL_PATH="$fixture_dir/parakeet-ultra-coreml"
+          DICTATE_SIGNING_MODE=adhoc ./bundle.sh
+          archive="$RUNNER_TEMP/$DICTATE_BUNDLE_NAME-ci.zip"
           extracted="$RUNNER_TEMP/extracted"
-          ditto -c -k --sequesterRsrc --keepParent "$TALKTEXT_BUNDLE_NAME.app" "$archive"
+          ditto -c -k --sequesterRsrc --keepParent "$DICTATE_BUNDLE_NAME.app" "$archive"
           mkdir -p "$extracted"
           ditto -x -k "$archive" "$extracted"
-          TALKTEXT_EXPECTED_SIGNATURE=adhoc TALKTEXT_X86_64_SMOKE_TEST=1 \
-            ./scripts/verify-bundle.sh "$extracted/$TALKTEXT_BUNDLE_NAME.app"
+          DICTATE_EXPECTED_SIGNATURE=adhoc DICTATE_X86_64_SMOKE_TEST=1 \
+            ./scripts/verify-bundle.sh "$extracted/$DICTATE_BUNDLE_NAME.app"
 
   backend-contract:
     name: Parakeet backend (${{ matrix.architecture }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - architecture: x86_64
-            runner: macos-15-intel
-          - architecture: arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
+        architecture:
+          - x86_64
+          - arm64
+    # Self-hosted Apple Silicon Mac minis. The x86_64 leg runs under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 45
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -131,11 +144,12 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify native architecture and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "${{ matrix.architecture }}"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
           swift --version
 
       - name: Restore reviewed Parakeet weights
@@ -143,7 +157,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: models
-          key: talktext-parakeet-ultra-${{ hashFiles('TalkText/Sources/TalkText/Resources/parakeet-model.json') }}
+          key: dictate-parakeet-ultra-${{ hashFiles('Dictate/Sources/Dictate/Resources/parakeet-model.json') }}
 
       - name: Install and verify the pinned production model
         if: matrix.architecture == 'arm64'
@@ -151,13 +165,25 @@ jobs:
 
       - name: Exercise Parakeet inference or unsupported-hardware preflight
         env:
-          TALKTEXT_PARAKEET_SMOKE_TEST: '1'
-          TALKTEXT_TEST_AUDIO: ${{ github.workspace }}/tests/fixtures/jfk.wav
+          DICTATE_PARAKEET_SMOKE_TEST: '1'
+          DICTATE_TEST_AUDIO: ${{ github.workspace }}/tests/fixtures/jfk.wav
         run: |
-          swift test --package-path TalkText \
-            --triple "${{ matrix.architecture }}-apple-macosx$TALKTEXT_MINIMUM_SYSTEM_VERSION" \
-            --scratch-path TalkText/.build/parakeet-${{ matrix.architecture }} \
-            --filter ParakeetIntegrationTests -Xswiftc -warnings-as-errors
+          if [[ "${{ matrix.architecture }}" == 'arm64' ]]; then
+            swift test --package-path Dictate \
+              --triple "arm64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+              --scratch-path Dictate/.build/parakeet-arm64 \
+              --filter ParakeetIntegrationTests -Xswiftc -warnings-as-errors
+          else
+            # SwiftPM's --filter lists tests with a helper that always launches
+            # natively and cannot load an x86_64 bundle, so run the translated
+            # XCTest suite unfiltered and require that the Intel guard ran.
+            log="$RUNNER_TEMP/intel-guard.log"
+            /usr/bin/arch -x86_64 swift test --package-path Dictate \
+              --triple "x86_64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+              --scratch-path Dictate/.build/parakeet-x86_64 \
+              --disable-swift-testing -Xswiftc -warnings-as-errors 2>&1 | tee "$log"
+            grep -F "testIntelPreflightRejectsUnsupportedHardwareBeforeLoadingModels]' passed" "$log"
+          fi
 
   required:
     name: Required
@@ -165,7 +191,7 @@ jobs:
     needs:
       - quality
       - backend-contract
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     steps:
       - name: Require every macOS gate
         env:

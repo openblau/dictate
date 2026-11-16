@@ -17,10 +17,10 @@ jobs:
     name: Sign, notarize, verify, and publish
     needs:
       - quality
-    runs-on: macos-15-intel
+    # Self-hosted Apple Silicon Mac mini. The Universal 2 bundle is
+    # cross-compiled and its x86_64 slice is smoke-tested under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 60
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -35,25 +35,29 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify pinned runner and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "x86_64"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
+          xcode_version="$(xcodebuild -version | sed -n '1s/^Xcode //p')"
+          test -n "$xcode_version"
+          echo "DICTATE_XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
 
       - name: Restore explicit SwiftPM cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: TalkText/.build
-          key: talktext-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-${{ hashFiles('TalkText/Package.swift', 'TalkText/Package.resolved') }}
+          path: Dictate/.build
+          key: dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
           restore-keys: |
-            talktext-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-
+            dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-
 
       - name: Restore digest-keyed model cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: models
-          key: talktext-model-v1-${{ hashFiles('TalkText/Sources/TalkText/Resources/parakeet-model.json') }}
+          key: dictate-model-v1-${{ hashFiles('Dictate/Sources/Dictate/Resources/parakeet-model.json') }}
 
       - name: Install or verify the pinned production model
         run: ./scripts/dependency-tool.sh install-model
@@ -69,13 +73,19 @@ jobs:
           : "${MACOS_SIGNING_IDENTITY:?missing MACOS_SIGNING_IDENTITY}"
 
           certificate_path="$RUNNER_TEMP/developer-id.p12"
-          keychain_path="$RUNNER_TEMP/talktext-signing.keychain-db"
+          keychain_path="$RUNNER_TEMP/dictate-signing.keychain-db"
           keychain_password="$(openssl rand -hex 32)"
           if printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path" 2>/dev/null; then
             :
           else
             printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
           fi
+          # The runner account outlives this job, so record its keychain
+          # search list and default keychain for the cleanup step to restore.
+          security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' \
+            > "$RUNNER_TEMP/original-keychains.txt"
+          security default-keychain -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' \
+            > "$RUNNER_TEMP/original-default-keychain.txt" || true
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
@@ -94,16 +104,16 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path" | grep -F "\"$MACOS_SIGNING_IDENTITY\""
           rm -f "$certificate_path"
 
-          echo "TALKTEXT_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+          echo "DICTATE_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Build, sign, notarize, staple, and archive
         env:
-          TALKTEXT_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          DICTATE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          TALKTEXT_RELEASE_TAG: ${{ github.ref_name }}
-          TALKTEXT_RELEASE_COMMIT: ${{ github.sha }}
+          DICTATE_RELEASE_TAG: ${{ github.ref_name }}
+          DICTATE_RELEASE_COMMIT: ${{ github.sha }}
         run: |
           : "${APPLE_ID:?missing APPLE_ID}"
           : "${APPLE_TEAM_ID:?missing APPLE_TEAM_ID}"
@@ -113,14 +123,14 @@ jobs:
       - name: Create draft release and upload verified assets
         env:
           GH_TOKEN: ${{ github.token }}
-          TALKTEXT_RELEASE_TAG: ${{ github.ref_name }}
-          TALKTEXT_RELEASE_COMMIT: ${{ github.sha }}
+          DICTATE_RELEASE_TAG: ${{ github.ref_name }}
+          DICTATE_RELEASE_COMMIT: ${{ github.sha }}
         run: |
           source dependencies.env
           version="$(./scripts/read-version.sh)"
-          zip_name="$TALKTEXT_BUNDLE_NAME-$version.zip"
+          zip_name="$DICTATE_BUNDLE_NAME-$version.zip"
           release_preamble="$(printf '%s\n\n%s\n\n%s' \
-            "This release is a notarized Universal 2 build for Apple Silicon and Intel Macs running macOS $TALKTEXT_MINIMUM_SYSTEM_VERSION or newer." \
+            "This release is a notarized Universal 2 build for Apple Silicon and Intel Macs running macOS $DICTATE_MINIMUM_SYSTEM_VERSION or newer." \
             "Pinned Parakeet model: $MODEL_REPOSITORY@$MODEL_REVISION; file digests are in the reviewed model manifest." \
             "Built-in transcription backend: FluidAudio $BACKEND_VERSION.")"
           ./release.sh verify-source
@@ -129,7 +139,7 @@ jobs:
             "dist/$zip_name.sha256" \
             --draft \
             --verify-tag \
-            --title "$TALKTEXT_BUNDLE_NAME $version" \
+            --title "$DICTATE_BUNDLE_NAME $version" \
             --generate-notes \
             --notes "$release_preamble"
 
@@ -139,31 +149,42 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           version="$(./scripts/read-version.sh)"
-          zip_name="$TALKTEXT_BUNDLE_NAME-$version.zip"
+          zip_name="$DICTATE_BUNDLE_NAME-$version.zip"
           download_dir="$RUNNER_TEMP/downloaded-release"
           extracted_dir="$RUNNER_TEMP/downloaded-release-extracted"
           mkdir -p "$download_dir" "$extracted_dir"
           gh release download "$GITHUB_REF_NAME" --pattern "$zip_name" --dir "$download_dir"
           (cd "$download_dir" && shasum -a 256 -c "$GITHUB_WORKSPACE/dist/$zip_name.sha256")
           ditto -x -k "$download_dir/$zip_name" "$extracted_dir"
-          TALKTEXT_EXPECTED_SIGNATURE=developer-id \
-          TALKTEXT_EXPECTED_TEAM_ID="$APPLE_TEAM_ID" \
-          TALKTEXT_REQUIRE_NOTARIZATION=1 \
-          TALKTEXT_X86_64_SMOKE_TEST=1 \
-            ./scripts/verify-bundle.sh "$extracted_dir/$TALKTEXT_BUNDLE_NAME.app"
+          DICTATE_EXPECTED_SIGNATURE=developer-id \
+          DICTATE_EXPECTED_TEAM_ID="$APPLE_TEAM_ID" \
+          DICTATE_REQUIRE_NOTARIZATION=1 \
+          DICTATE_X86_64_SMOKE_TEST=1 \
+            ./scripts/verify-bundle.sh "$extracted_dir/$DICTATE_BUNDLE_NAME.app"
 
       - name: Publish only after downloaded-asset verification
         env:
           GH_TOKEN: ${{ github.token }}
-          TALKTEXT_RELEASE_TAG: ${{ github.ref_name }}
-          TALKTEXT_RELEASE_COMMIT: ${{ github.sha }}
+          DICTATE_RELEASE_TAG: ${{ github.ref_name }}
+          DICTATE_RELEASE_COMMIT: ${{ github.sha }}
         run: |
           ./release.sh verify-source
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
 
-      - name: Delete ephemeral keychain
+      - name: Delete ephemeral keychain and restore the runner's keychains
         if: ${{ always() }}
         run: |
-          if [[ -n "${TALKTEXT_KEYCHAIN:-}" && -f "$TALKTEXT_KEYCHAIN" ]]; then
-            security delete-keychain "$TALKTEXT_KEYCHAIN"
+          if [[ -s "$RUNNER_TEMP/original-keychains.txt" ]]; then
+            original_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && original_keychains+=("$keychain")
+            done < "$RUNNER_TEMP/original-keychains.txt"
+            security list-keychains -d user -s "${original_keychains[@]}"
+          fi
+          if [[ -s "$RUNNER_TEMP/original-default-keychain.txt" ]]; then
+            security default-keychain -d user \
+              -s "$(sed -n '1p' "$RUNNER_TEMP/original-default-keychain.txt")"
+          fi
+          if [[ -n "${DICTATE_KEYCHAIN:-}" && -f "$DICTATE_KEYCHAIN" ]]; then
+            security delete-keychain "$DICTATE_KEYCHAIN"
           fi

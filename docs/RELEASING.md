@@ -2,31 +2,32 @@
 
 ## Supported Macs
 
-TalkText transcription requires macOS 14 or newer on native Apple Silicon
+Dictate transcription requires macOS 14 or newer on native Apple Silicon
 (`arm64`). Every distributable app remains Universal 2 so Intel (`x86_64`) and
 Rosetta launches can show a clear unsupported-hardware message before model loading.
 The bundled Parakeet Core ML assets are architecture-neutral, but this integration
 supports inference only on Apple Silicon, using Core ML and the Neural Engine. `bundle.sh`, CI, and `release.sh` all
 reject an app whose executable does not contain exactly those two slices.
 
-CI compiles and launches the app on the pinned `macos-15-intel` image. A
-separate native backend matrix uses `macos-15-intel` for `x86_64` and
-`macos-15` for `arm64`. Both app slices are separately compiled with the macOS
-14 deployment target and warnings treated as errors before `lipo` creates the
-final binary.
+CI and releases run on the organization's self-hosted Apple Silicon Mac mini
+runners (labels `self-hosted, macOS, ARM64, macmini`). There is no Intel
+hardware in that fleet, so every `x86_64` check runs under Rosetta: the
+`x86_64` test suite, the backend matrix's `x86_64` leg, and the launch smoke
+test. Both app slices are separately compiled with the macOS 14 deployment
+target and warnings treated as errors before `lipo` creates the final binary.
 
 ## Canonical release metadata
 
-- `TalkText/Info.plist` is the only source for the bundle identifier,
+- `Dictate/Info.plist` is the only source for the bundle identifier,
   executable name, minimum system version, permission text, and other bundle
-  metadata. `TalkText/Package.swift` reads `CFBundleExecutable` and
+  metadata. `Dictate/Package.swift` reads `CFBundleExecutable` and
   `LSMinimumSystemVersion` from this file when SwiftPM evaluates the manifest,
   and the bundle scripts and GitHub workflows export the same metadata for
   product, deployment-target, and artifact lookup. The plist intentionally
   contains no version keys.
 - `VERSION` is the only version source. It must be one line containing a
   three-component numeric semantic version such as `1.2.3`. Bundle,
-  verification, and release entry points reject `TALKTEXT_VERSION_FILE` so an
+  verification, and release entry points reject `DICTATE_VERSION_FILE` so an
   external fixture cannot select production metadata or archive names.
 - Public releases use that same value for both
   `CFBundleShortVersionString` and `CFBundleVersion`. This is the explicit build
@@ -38,11 +39,11 @@ final binary.
   rechecked after archive verification and immediately before each publication
   transition. The archive is named
   `<CFBundleName>-<VERSION>.zip`.
-- `TalkText/Package.resolved` and `TalkText/Sources/TalkText/Resources/parakeet-model.json`
+- `Dictate/Package.resolved` and `Dictate/Sources/Dictate/Resources/parakeet-model.json`
   pin the built-in SDK and model assets and are included in immutable release
   source verification. The bundle includes both SwiftPM resource bundles and
   the reviewed model manifest.
-- `TalkText/TalkText.entitlements` is the reviewed, canonical entitlement set.
+- `Dictate/Dictate.entitlements` is the reviewed, canonical entitlement set.
   The final signing command consumes it, and bundle verification compares the
   entitlements embedded in the code signature with that file.
 
@@ -53,8 +54,8 @@ bundle and lets CI run strict signature, resource, metadata, entitlement, and
 architecture checks without access to release credentials. It is not a
 distributable or Gatekeeper-trusted signature.
 
-The local `bun talktext` deployment path uses the same bundle assembly and
-verification with `TALKTEXT_SIGNING_MODE=apple-development` when a suitable
+The local `bun dictate` deployment path uses the same bundle assembly and
+verification with `DICTATE_SIGNING_MODE=apple-development` when a suitable
 certificate is available. This keeps local TCC permission grants stable across
 rebuilds while remaining distinct from the Developer ID and notarization path
 used for public releases. It falls back to the default ad-hoc mode on machines
@@ -70,11 +71,11 @@ extracted app.
 For a local release, export:
 
 ```sh
-export TALKTEXT_SIGNING_IDENTITY='Developer ID Application: Example (TEAMID)'
+export DICTATE_SIGNING_IDENTITY='Developer ID Application: Example (TEAMID)'
 export APPLE_TEAM_ID='TEAMID'
 export APPLE_ID='release@example.com'
 export APPLE_APP_SPECIFIC_PASSWORD='xxxx-xxxx-xxxx-xxxx'
-export TALKTEXT_RELEASE_TAG="v$(./scripts/read-version.sh)"
+export DICTATE_RELEASE_TAG="v$(./scripts/read-version.sh)"
 ./scripts/dependency-tool.sh install-model
 ./release.sh
 ```
@@ -112,21 +113,24 @@ check run from GitHub Actions. The REST branch-protection context is exactly
 requests and pushes to `main` run that check. Tag releases call the same
 reusable workflow first, and publishing cannot start unless it succeeds.
 
-The check pins macOS to `macos-15-intel` and `macos-15`, Xcode to 16.4,
-third-party lint tool versions and archive digests, and every GitHub Action to
-a full commit SHA. SwiftPM, model, and tool caches use explicit, versioned keys. The gate covers:
+The check uses the macOS and Xcode installed on the self-hosted runners, and
+logs both versions at the start of every job; it requires an `arm64` host with
+Rosetta. It pins third-party lint tool versions and archive digests, and every
+GitHub Action to a full commit SHA. SwiftPM, model, and tool caches use
+explicit, versioned keys that include the runner's Xcode version. The gate covers:
 
 - debug and release Universal 2 compilation with warnings as errors
 - all Swift and dependency fixture tests
 - native Parakeet model loading, final transcription, and live preview
-  on Apple Silicon, plus unsupported-hardware preflight on Intel
+  on Apple Silicon, plus unsupported-hardware preflight for `x86_64` under
+  Rosetta
 - shell syntax and source plist validation
 - SwiftLint and SwiftFormat using committed configuration
 - bundle executable, resources, model digest, canonical metadata, exact
   architecture slices, hardened runtime, resource seal, strict signature, and
   embedded entitlement checks
-- zip extraction followed by the same bundle checks and an Intel launch smoke
-  test
+- zip extraction followed by the same bundle checks and an `x86_64` launch
+  smoke test under Rosetta
 
 Branch protection and repository secrets are GitHub-hosted settings and cannot
 be established by committed workflow files. Configure them before treating the

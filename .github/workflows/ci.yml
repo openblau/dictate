@@ -16,11 +16,14 @@ concurrency:
 
 jobs:
   quality:
-    name: App, tests, and bundle (Intel)
-    runs-on: macos-15-intel
+    name: App, tests, and bundle
+    # Self-hosted Apple Silicon Mac minis. Intel coverage runs under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 45
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      # Per-job tool directory: runners that share a host and home directory
+      # must not race on one install location.
+      DICTATE_CI_TOOL_CACHE: ${{ runner.temp }}/dictate-tools
     defaults:
       run:
         shell: bash
@@ -32,22 +35,26 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify pinned runner and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "x86_64"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
           swift --version
+          xcode_version="$(xcodebuild -version | sed -n '1s/^Xcode //p')"
+          test -n "$xcode_version"
+          echo "DICTATE_XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
 
       - name: Restore explicit SwiftPM and tool caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             Dictate/.build
-            ~/.cache/dictate-tools
-          key: dictate-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
+            ${{ runner.temp }}/dictate-tools
+          key: dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
           restore-keys: |
-            dictate-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-
+            dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-
 
       - name: Install digest-pinned lint tools
         run: |
@@ -81,13 +88,23 @@ jobs:
             done
           done
 
-      - name: Run all tests
+      - name: Run all tests natively and under Rosetta
         run: |
           swift test \
             --package-path Dictate \
             --configuration debug \
+            --triple "arm64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+            --scratch-path Dictate/.build/tests-arm64 \
+            -Xswiftc -warnings-as-errors
+          # The whole toolchain runs translated so the x86_64 test bundle
+          # loads. SwiftPM's Swift Testing helper always launches natively and
+          # cannot load it, so that library is covered by the arm64 run above.
+          /usr/bin/arch -x86_64 swift test \
+            --package-path Dictate \
+            --configuration debug \
             --triple "x86_64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
             --scratch-path Dictate/.build/tests-x86_64 \
+            --disable-swift-testing \
             -Xswiftc -warnings-as-errors
           bash tests/dependency-tool-fixtures.sh
 
@@ -111,15 +128,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - architecture: x86_64
-            runner: macos-15-intel
-          - architecture: arm64
-            runner: macos-15
-    runs-on: ${{ matrix.runner }}
+        architecture:
+          - x86_64
+          - arm64
+    # Self-hosted Apple Silicon Mac minis. The x86_64 leg runs under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 45
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -131,11 +145,12 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify native architecture and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "${{ matrix.architecture }}"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
           swift --version
 
       - name: Restore reviewed Parakeet weights
@@ -154,10 +169,22 @@ jobs:
           DICTATE_PARAKEET_SMOKE_TEST: '1'
           DICTATE_TEST_AUDIO: ${{ github.workspace }}/tests/fixtures/jfk.wav
         run: |
-          swift test --package-path Dictate \
-            --triple "${{ matrix.architecture }}-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
-            --scratch-path Dictate/.build/parakeet-${{ matrix.architecture }} \
-            --filter ParakeetIntegrationTests -Xswiftc -warnings-as-errors
+          if [[ "${{ matrix.architecture }}" == 'arm64' ]]; then
+            swift test --package-path Dictate \
+              --triple "arm64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+              --scratch-path Dictate/.build/parakeet-arm64 \
+              --filter ParakeetIntegrationTests -Xswiftc -warnings-as-errors
+          else
+            # SwiftPM's --filter lists tests with a helper that always launches
+            # natively and cannot load an x86_64 bundle, so run the translated
+            # XCTest suite unfiltered and require that the Intel guard ran.
+            log="$RUNNER_TEMP/intel-guard.log"
+            /usr/bin/arch -x86_64 swift test --package-path Dictate \
+              --triple "x86_64-apple-macosx$DICTATE_MINIMUM_SYSTEM_VERSION" \
+              --scratch-path Dictate/.build/parakeet-x86_64 \
+              --disable-swift-testing -Xswiftc -warnings-as-errors 2>&1 | tee "$log"
+            grep -F "testIntelPreflightRejectsUnsupportedHardwareBeforeLoadingModels]' passed" "$log"
+          fi
 
   required:
     name: Required
@@ -165,7 +192,7 @@ jobs:
     needs:
       - quality
       - backend-contract
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     steps:
       - name: Require every macOS gate
         env:

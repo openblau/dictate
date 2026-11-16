@@ -17,10 +17,10 @@ jobs:
     name: Sign, notarize, verify, and publish
     needs:
       - quality
-    runs-on: macos-15-intel
+    # Self-hosted Apple Silicon Mac mini. The Universal 2 bundle is
+    # cross-compiled and its x86_64 slice is smoke-tested under Rosetta.
+    runs-on: [self-hosted, macOS, ARM64, macmini]
     timeout-minutes: 60
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -35,19 +35,23 @@ jobs:
       - name: Export canonical bundle metadata
         run: ./scripts/export-canonical-metadata.sh
 
-      - name: Verify pinned runner and toolchain
+      - name: Verify runner architecture, Rosetta, and toolchain
         run: |
-          test "$(uname -m)" = "x86_64"
-          test "$(sw_vers -productVersion | cut -d. -f1)" = "15"
-          test "$(xcodebuild -version | sed -n '1p')" = "Xcode 16.4"
+          test "$(uname -m)" = "arm64"
+          test "$(/usr/bin/arch -x86_64 /usr/bin/uname -m)" = "x86_64"
+          sw_vers
+          xcodebuild -version
+          xcode_version="$(xcodebuild -version | sed -n '1s/^Xcode //p')"
+          test -n "$xcode_version"
+          echo "DICTATE_XCODE_VERSION=$xcode_version" >> "$GITHUB_ENV"
 
       - name: Restore explicit SwiftPM cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: Dictate/.build
-          key: dictate-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
+          key: dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-${{ hashFiles('Dictate/Package.swift', 'Dictate/Package.resolved') }}
           restore-keys: |
-            dictate-v1-${{ runner.os }}-${{ runner.arch }}-xcode-16.4-
+            dictate-v2-${{ runner.os }}-${{ runner.arch }}-xcode-${{ env.DICTATE_XCODE_VERSION }}-
 
       - name: Restore digest-keyed model cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -76,6 +80,12 @@ jobs:
           else
             printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
           fi
+          # The runner account outlives this job, so record its keychain
+          # search list and default keychain for the cleanup step to restore.
+          security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' \
+            > "$RUNNER_TEMP/original-keychains.txt"
+          security default-keychain -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' \
+            > "$RUNNER_TEMP/original-default-keychain.txt" || true
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
@@ -161,9 +171,20 @@ jobs:
           ./release.sh verify-source
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
 
-      - name: Delete ephemeral keychain
+      - name: Delete ephemeral keychain and restore the runner's keychains
         if: ${{ always() }}
         run: |
+          if [[ -s "$RUNNER_TEMP/original-keychains.txt" ]]; then
+            original_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && original_keychains+=("$keychain")
+            done < "$RUNNER_TEMP/original-keychains.txt"
+            security list-keychains -d user -s "${original_keychains[@]}"
+          fi
+          if [[ -s "$RUNNER_TEMP/original-default-keychain.txt" ]]; then
+            security default-keychain -d user \
+              -s "$(sed -n '1p' "$RUNNER_TEMP/original-default-keychain.txt")"
+          fi
           if [[ -n "${DICTATE_KEYCHAIN:-}" && -f "$DICTATE_KEYCHAIN" ]]; then
             security delete-keychain "$DICTATE_KEYCHAIN"
           fi

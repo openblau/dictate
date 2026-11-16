@@ -86,7 +86,8 @@ The integration fixture `tests/fixtures/jfk.wav` comes from
 `ggml-org/whisper.cpp` at commit `9386f239401074690479731c1e41683fbbeac557`
 (`samples/jfk.wav`, SHA-256 `59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e`).
 It contains public speech, not a user's recording. Native CI runs real inference on
-Apple Silicon and tests the unsupported-hardware preflight on Intel. Core ML
+Apple Silicon and tests the unsupported-hardware preflight for `x86_64` under
+Rosetta. Core ML
 prediction with these assets crashed under Rosetta during local verification;
 Dictate rejects x86_64 inference before loading any model.
 

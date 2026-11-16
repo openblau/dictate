@@ -227,7 +227,7 @@ Setup, bundle assembly, and bundle verification use the same verifier:
 Production setup and release reject alternate model manifests. Developer ID
 bundling also rejects manifest overrides. CI uses a small deterministic fixture
 to verify packaging, plus real model inference on Apple Silicon and the
-unsupported-hardware guard on Intel.
+unsupported-hardware guard for `x86_64` under Rosetta.
 
 To update the dependency, review the SDK pin, the immutable model revision, every
 file size and digest, the resolver contract, and native inference checks together.

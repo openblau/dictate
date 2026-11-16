@@ -9,11 +9,12 @@ The bundled Parakeet Core ML assets are architecture-neutral, but this integrati
 supports inference only on Apple Silicon, using Core ML and the Neural Engine. `bundle.sh`, CI, and `release.sh` all
 reject an app whose executable does not contain exactly those two slices.
 
-CI compiles and launches the app on the pinned `macos-15-intel` image. A
-separate native backend matrix uses `macos-15-intel` for `x86_64` and
-`macos-15` for `arm64`. Both app slices are separately compiled with the macOS
-14 deployment target and warnings treated as errors before `lipo` creates the
-final binary.
+CI and releases run on the organization's self-hosted Apple Silicon Mac mini
+runners (labels `self-hosted, macOS, ARM64, macmini`). There is no Intel
+hardware in that fleet, so every `x86_64` check runs under Rosetta: the
+`x86_64` test suite, the backend matrix's `x86_64` leg, and the launch smoke
+test. Both app slices are separately compiled with the macOS 14 deployment
+target and warnings treated as errors before `lipo` creates the final binary.
 
 ## Canonical release metadata
 
@@ -112,21 +113,24 @@ check run from GitHub Actions. The REST branch-protection context is exactly
 requests and pushes to `main` run that check. Tag releases call the same
 reusable workflow first, and publishing cannot start unless it succeeds.
 
-The check pins macOS to `macos-15-intel` and `macos-15`, Xcode to 16.4,
-third-party lint tool versions and archive digests, and every GitHub Action to
-a full commit SHA. SwiftPM, model, and tool caches use explicit, versioned keys. The gate covers:
+The check uses the macOS and Xcode installed on the self-hosted runners, and
+logs both versions at the start of every job; it requires an `arm64` host with
+Rosetta. It pins third-party lint tool versions and archive digests, and every
+GitHub Action to a full commit SHA. SwiftPM, model, and tool caches use
+explicit, versioned keys that include the runner's Xcode version. The gate covers:
 
 - debug and release Universal 2 compilation with warnings as errors
 - all Swift and dependency fixture tests
 - native Parakeet model loading, final transcription, and live preview
-  on Apple Silicon, plus unsupported-hardware preflight on Intel
+  on Apple Silicon, plus unsupported-hardware preflight for `x86_64` under
+  Rosetta
 - shell syntax and source plist validation
 - SwiftLint and SwiftFormat using committed configuration
 - bundle executable, resources, model digest, canonical metadata, exact
   architecture slices, hardened runtime, resource seal, strict signature, and
   embedded entitlement checks
-- zip extraction followed by the same bundle checks and an Intel launch smoke
-  test
+- zip extraction followed by the same bundle checks and an `x86_64` launch
+  smoke test under Rosetta
 
 Branch protection and repository secrets are GitHub-hosted settings and cannot
 be established by committed workflow files. Configure them before treating the

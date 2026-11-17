@@ -11,6 +11,6 @@ The conversion uses an int8 encoder and re-exported Ultra decoder and joint;
 the preprocessor and vocabulary are from Parakeet v3.
 Dictate uses the pinned conversion revision recorded in parakeet-model.json.
 
-Inference SDK: FluidAudio 0.17.4, licensed under Apache License 2.0.
-https://github.com/FluidInference/FluidAudio/tree/v0.17.4
+Inference SDK: FluidAudio 0.18.3, licensed under Apache License 2.0.
+https://github.com/FluidInference/FluidAudio/tree/v0.18.3
 The full SDK license and third-party notices are included in Resources/Licenses.

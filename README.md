@@ -86,7 +86,7 @@ From a clean checkout, run:
 ```
 
 Setup downloads and verifies every file of the pinned Parakeet Ultra
-model, then builds the release executable. FluidAudio 0.17.4 is linked into
+model, then builds the release executable. FluidAudio 0.18.3 is linked into
 Dictate through Swift Package Manager; no separate transcription executable
 or Homebrew STT formula is required. Setup prints the built executable path.
 Use `bun dictate` to build and deploy the app, or `./bundle.sh` to build a local

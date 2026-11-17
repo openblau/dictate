@@ -31,7 +31,7 @@ settings:
 packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    exactVersion: 0.17.4
+    exactVersion: 0.18.3
 
 targets:
   Dictate:

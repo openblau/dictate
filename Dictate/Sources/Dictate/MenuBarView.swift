@@ -2,7 +2,9 @@ import AppKit
 import SwiftUI
 
 /// Native menu items only: dictation stays at the cursor in the user's app.
+/// The one exception is the custom-words editor, which opens its own window.
 struct MenuBarView: View {
+    let showCustomWords: () -> Void
     @EnvironmentObject var engine: TranscriptionEngine
     @EnvironmentObject var hotKeyController: HotKeyController
     @EnvironmentObject var audioInputSelection: AudioInputSelection
@@ -68,6 +70,10 @@ struct MenuBarView: View {
 
         Toggle(isOn: $playsSoundCues) {
             Label("Sound Cues", systemImage: playsSoundCues ? "speaker.wave.2" : "speaker.slash")
+        }
+
+        Button { showCustomWords() } label: {
+            Label("Custom Words…", systemImage: "character.book.closed")
         }
 
         Divider()

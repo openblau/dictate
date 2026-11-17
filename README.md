@@ -47,6 +47,22 @@ macOS does not send a route notification. Device setup, chime playback, resampli
 and disk writes run off the UI thread. The resampler flushes its trailing audio
 on stop and format changes so key-up does not clip the final syllable.
 
+### Custom words
+
+Some names sound like ordinary words, so the recognizer hears them correctly
+and still spells them wrong: a company called Bloxwap is transcribed as "block
+swap". **Custom Words…** in the menu bar opens a list of spellings to apply.
+Each entry pairs what Dictate hears with what it should write; add `block swap`
+→ `Bloxwap` and every dictation writes the name correctly, in the live draft
+and in the inserted text.
+
+Matching ignores capitals, only matches whole words, and treats the gaps
+between the heard words as optional, so one entry covers "block swap", "Block
+Swap", "blockswap" and "block-swap". A replacement always applies: with the
+entry above there is no way to dictate the literal words "block swap". Edits
+are saved as you type and apply from the next recording. Custom words correct
+spelling only; they do not change what the recognizer hears.
+
 ## Requirements
 
 - macOS 14+ on Apple Silicon; Parakeet requires the native arm64 app

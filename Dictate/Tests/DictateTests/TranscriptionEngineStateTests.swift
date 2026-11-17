@@ -330,6 +330,36 @@ final class TranscriptionEngineStateTests: XCTestCase {
         XCTAssertEqual(Set(store.removedURLs), Set(store.allocatedURLs))
     }
 
+    func testCustomWordsRewriteLiveDraftsAndTheFinalText() async {
+        let snapshotter = EngineSnapshotterFake(result: true)
+        let transcriber = EnginePreviewTranscriberFake(
+            draft: .success("I work at block swap"),
+            final: .success("I work at Block Swap now.")
+        )
+        let delivery = EngineDeliveryFake()
+        let overlay = EngineOverlayFake()
+        let engine = makeEngine(
+            snapshotter: snapshotter,
+            transcriber: transcriber,
+            delivery: delivery,
+            overlay: overlay,
+            customWords: [CustomWord(heard: "block swap", written: "Bloxwap")],
+            livePreviewInterval: 0.01
+        )
+
+        engine.toggleRecording()
+        await waitUntilWithDelay { overlay.shownTexts.last == "I work at Bloxwap" }
+        XCTAssertFalse(overlay.shownTexts.contains { $0.localizedCaseInsensitiveContains("block swap") })
+        transcriber.setFinalRecordingURL(snapshotter.requests[0].source)
+
+        engine.toggleRecording()
+        await waitUntilWithDelay { engine.state == .idle }
+
+        XCTAssertEqual(overlay.completedTexts, ["I work at Bloxwap now."])
+        XCTAssertEqual(delivery.finalizedTexts, ["I work at Bloxwap now."])
+        XCTAssertEqual(delivery.deliveredTexts, ["I work at Bloxwap now."])
+    }
+
     func testCancellingDuringRecordingDismissesTheOverlayWithoutWriting() async {
         let snapshotter = EngineSnapshotterFake(result: true)
         let transcriber = EnginePreviewTranscriberFake(draft: .success("draft"), final: .success("unused"))
@@ -487,6 +517,7 @@ final class TranscriptionEngineStateTests: XCTestCase {
         transcriber: any SpeechTranscribing = EngineTranscriberFake(),
         delivery: EngineDeliveryFake = EngineDeliveryFake(),
         overlay: any LiveTranscriptOverlaying = DisabledLiveTranscriptOverlay(),
+        customWords: [CustomWord] = [],
         livePreviewInterval: TimeInterval = 1.5
     ) -> TranscriptionEngine {
         TranscriptionEngine(
@@ -500,6 +531,7 @@ final class TranscriptionEngineStateTests: XCTestCase {
             transcriber: transcriber,
             textDelivery: delivery,
             liveOverlay: overlay,
+            customWords: { customWords },
             livePreviewInterval: livePreviewInterval,
             performStartupCleanup: false
         )

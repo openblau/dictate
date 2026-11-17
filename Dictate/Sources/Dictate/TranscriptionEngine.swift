@@ -72,6 +72,10 @@ final class TranscriptionEngine: ObservableObject {
     private let livePreview: LiveTranscriptionPreview
     private let liveOverlay: any LiveTranscriptOverlaying
     private var draftConfirmation = TranscriptConfirmation()
+    private let customWords: @MainActor () -> [CustomWord]
+    /// Read once when recording starts, so drafts and the final text of one
+    /// dictation always use the same custom words.
+    private var sessionCustomWords = CustomWordReplacer(words: [])
 
     /// Peak level below which a recording holds no speech. Real speech peaks far
     /// above this even from across a room; digital silence sits at -infinity.
@@ -98,6 +102,7 @@ final class TranscriptionEngine: ObservableObject {
         transcriber: any SpeechTranscribing,
         textDelivery: any TextDelivering,
         liveOverlay: any LiveTranscriptOverlaying = DisabledLiveTranscriptOverlay(),
+        customWords: @escaping @MainActor () -> [CustomWord] = { CustomWordPreference.load() },
         applicationBundleIdentifier: String? = AppIdentity.bundleIdentifier,
         maximumDuration: TimeInterval = TranscriptionEngine.maximumRecordingDuration,
         livePreviewInterval: TimeInterval = 0.1,
@@ -113,6 +118,7 @@ final class TranscriptionEngine: ObservableObject {
         self.transcriber = transcriber
         self.textDelivery = textDelivery
         self.liveOverlay = liveOverlay
+        self.customWords = customWords
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.maximumDuration = maximumDuration
         self.livePreviewInterval = max(0.05, livePreviewInterval)
@@ -388,6 +394,7 @@ final class TranscriptionEngine: ObservableObject {
                 // Drafts appear in the overlay the moment each pass finishes, faint
                 // until two passes agree. The field is written once, on release.
                 self.draftConfirmation = TranscriptConfirmation()
+                self.sessionCustomWords = CustomWordReplacer(words: self.customWords())
                 self.livePreview.start(
                     recordingURL: recordingURL,
                     minimumInterval: self.livePreviewInterval
@@ -398,6 +405,7 @@ final class TranscriptionEngine: ObservableObject {
                           self.currentRecorderHasAudio else {
                         return
                     }
+                    let text = self.sessionCustomWords.apply(to: text)
                     let confirmed = self.draftConfirmation.update(with: text)
                     self.liveOverlay.show(text, confirmedCharacters: confirmed, near: self.currentSessionTarget)
                 }
@@ -567,13 +575,14 @@ final class TranscriptionEngine: ObservableObject {
         let outcomePresentation = Self.presentation(for: outcome)
         transition(to: outcomePresentation)
 
-        guard case let .success(text) = outcome else {
+        guard case let .success(recognizedText) = outcome else {
             liveOverlay.dismiss()
             textDelivery.cancelLiveTranscript()
             finishSessionKeepingPresentation()
             return
         }
 
+        let text = sessionCustomWords.apply(to: recognizedText)
         let target = currentSessionTarget
         liveOverlay.complete(with: text)
         // One write at the cursor captured when recording began, using the

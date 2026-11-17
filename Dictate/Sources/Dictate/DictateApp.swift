@@ -6,7 +6,7 @@ struct DictateApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView()
+            MenuBarView(showCustomWords: { appDelegate.customWordsWindow.show() })
                 .environmentObject(appDelegate.transcriptionEngine)
                 .environmentObject(appDelegate.hotKeyController)
                 .environmentObject(appDelegate.audioInputSelection)

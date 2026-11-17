@@ -1,0 +1,4 @@
+# Custom label used by the self-hosted Apple Silicon Mac mini fleet.
+self-hosted-runner:
+  labels:
+    - macmini

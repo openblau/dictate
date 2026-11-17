@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let transcriptionEngine: TranscriptionEngine
     let hotKeyController: HotKeyController
     let audioInputSelection: AudioInputSelection
+    let customWordsWindow = CustomWordsWindowController()
     private var engineStateObservation: AnyCancellable?
 
     override convenience init() {

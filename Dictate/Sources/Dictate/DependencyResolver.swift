@@ -5,7 +5,7 @@ import Foundation
 enum ParakeetModelContract {
     static let repository = "FluidInference/parakeet-ultra-coreml"
     static let directoryName = "parakeet-ultra-coreml"
-    static let sdkVersion = "0.17.4"
+    static let sdkVersion = "0.18.3"
     static let requiredComponents = [
         "Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecisionv3.mlmodelc",
     ]

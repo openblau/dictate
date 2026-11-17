@@ -124,7 +124,7 @@ final class DependencyResolverContractTests: XCTestCase {
         }
         let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let resolved = try String(contentsOf: package.appendingPathComponent("Package.resolved"), encoding: .utf8)
-        XCTAssertTrue(resolved.contains("\"version\" : \"0.17.4\""))
+        XCTAssertTrue(resolved.contains("\"version\" : \"0.18.3\""))
     }
 
     private func configuration(environment: [String: String] = [:]) -> ParakeetResolverConfiguration {

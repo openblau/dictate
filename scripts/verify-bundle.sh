@@ -146,7 +146,7 @@ export DICTATE_MODEL_MANIFEST="$MODEL_MANIFEST"
 BUNDLED_MODEL="$APP_PATH/Contents/Resources/models/$MODEL_DIRECTORY_NAME"
 [[ -r "$APP_PATH/Contents/Resources/parakeet-model.json" ]] || fail "Dictate model manifest resource is missing"
 cmp -s "$CANONICAL_MODEL_MANIFEST" "$APP_PATH/Contents/Resources/parakeet-model.json" || fail "bundled model manifest differs from the reviewed source"
-[[ -d "$APP_PATH/Contents/Resources/FluidAudio_FluidAudio.bundle" ]] || fail "FluidAudio resources are missing"
+[[ -d "$APP_PATH/Contents/Resources/FluidAudio_LuxTtsG2pResources.bundle" ]] || fail "FluidAudio resources are missing"
 DICTATE_DEPENDENCY_MANIFEST="$DEPENDENCY_MANIFEST" \
     "$SCRIPT_DIR/dependency-tool.sh" verify-model "$BUNDLED_MODEL"
 
